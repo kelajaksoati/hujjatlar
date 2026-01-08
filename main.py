@@ -12,16 +12,14 @@ from dotenv import load_dotenv
 from database import Database
 from processor import smart_rename, edit_excel, add_pdf_watermark, edit_docx
 
-# Loyiha joylashgan papkani aniqlash (Alwaysdata uchun muhim)
+# Loyiha papkasini aniqlash
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Ma'lumotlar bazasiga to'liq yo'lni ko'rsatamiz
 db = Database(os.path.join(BASE_DIR, "bot_database.db"))
-
 bot = Bot(
     token=os.getenv("BOT_TOKEN"), 
     default=DefaultBotProperties(parse_mode="HTML")
@@ -97,29 +95,62 @@ async def add_admin_handler(m: Message):
     except:
         await m.answer("⚠️ Format: <code>/add_admin ID</code>")
 
-# (Boshqa handlerlar o'zgarishsiz qoladi - set_tpl, save_tpl, show_stats va h.k.)
-# ... [Sizning original handlerlaringiz] ...
+@dp.callback_query(F.data == "set_tpl")
+async def set_template(call: CallbackQuery, state: FSMContext):
+    await call.message.answer("📝 Yangi shablon matnini yuboring.")
+    await state.set_state(AdminStates.waiting_for_tpl)
+    await call.answer()
 
-# --- WEB SERVER & MAIN ---
-async def handle_root(request): 
-    return web.Response(text="Bot Alwaysdata'da ishlamoqda 🚀")
+@dp.message(AdminStates.waiting_for_tpl)
+async def save_tpl(m: Message, state: FSMContext):
+    await db.set_setting('post_caption', m.text)
+    await m.answer("✅ Shablon saqlandi!")
+    await state.clear()
+
+@dp.message(F.document)
+async def handle_doc(m: Message, state: FSMContext):
+    if not await db.is_admin(m.from_user.id, OWNER_ID): return
+    os.makedirs("downloads", exist_ok=True)
+    path = f"downloads/{m.document.file_name}"
+    await bot.download(m.document, destination=path)
+    await state.update_data(f_path=path, f_name=m.document.file_name)
+    await m.answer("📅 Vaqt (DD.MM.YYYY HH:MM) yoki hozir uchun <b>0</b>:")
+    await state.set_state(AdminStates.waiting_for_time)
+
+@dp.message(AdminStates.waiting_for_time)
+async def schedule_step(m: Message, state: FSMContext):
+    data = await state.get_data()
+    if m.text == "0":
+        if data['f_name'].endswith(".zip"):
+            ex_dir = f"downloads/zip_{datetime.now().timestamp()}"
+            with zipfile.ZipFile(data['f_path'], 'r') as z: z.extractall(ex_dir)
+            for r, d, fs in os.walk(ex_dir):
+                for f in fs:
+                    if not f.startswith('.') and "__MACOSX" not in r: 
+                        await process_and_send(os.path.join(r, f), f)
+            shutil.rmtree(ex_dir)
+        else:
+            await process_and_send(data['f_path'], data['f_name'])
+        await m.answer("✅ Bajarildi.")
+    else:
+        try:
+            run_time = datetime.strptime(m.text, "%d.%m.%Y %H:%M")
+            scheduler.add_job(process_and_send, 'date', run_date=run_time, args=[data['f_path'], data['f_name']])
+            await m.answer(f"⏳ Rejalashtirildi: {m.text}")
+        except:
+            await m.answer("❌ Xato format. Namuna: 06.01.2025 23:00")
+    await state.clear()
+
+async def handle_root(request): return web.Response(text="Bot Live 🚀")
 
 async def main():
     await db.create_tables()
     scheduler.start()
-    
     app = web.Application()
     app.router.add_get('/', handle_root)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    
-    # Alwaysdata PORT o'zgaruvchisini avtomatik beradi, IP '0.0.0.0' bo'lishi shart
+    runner = web.AppRunner(app); await runner.setup()
     port = int(os.environ.get("PORT", 8100))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    
-    logger.info(f"Server {port}-portda ishga tushdi")
-    
+    await web.TCPSite(runner, '0.0.0.0', port).start()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
