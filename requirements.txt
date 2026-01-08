@@ -1,0 +1,9 @@
+aiogram>=3.0.0
+aiosqlite
+python-dotenv
+aiohttp
+openpyxl
+pypdf
+reportlab
+python-docx
+apscheduler
