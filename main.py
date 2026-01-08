@@ -1,56 +1,63 @@
-import asyncio, os, zipfile, shutil, aiohttp, logging
+import os
+import logging
+import sys
 from datetime import datetime
-from aiogram import Bot, Dispatcher, F, types
-from aiogram.client.default import DefaultBotProperties 
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, FSInputFile
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import zipfile
+import shutil
+
 from aiohttp import web
+from aiogram import Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from dotenv import load_dotenv
 
 from database import Database
 from processor import smart_rename, edit_excel, add_pdf_watermark, edit_docx
 
-# Loyiha papkasini aniqlash
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(BASE_DIR, '.env'))
-
-logging.basicConfig(level=logging.INFO)
+# --- SOZLAMALAR ---
+load_dotenv()
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger(__name__)
 
-db = Database(os.path.join(BASE_DIR, "bot_database.db"))
-bot = Bot(
-    token=os.getenv("BOT_TOKEN"), 
-    default=DefaultBotProperties(parse_mode="HTML")
-)
-dp = Dispatcher()
-scheduler = AsyncIOScheduler()
+# O'zgaruvchilarni olish
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+CHANNEL_ID = os.getenv("CHANNEL_ID")
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "ish_reja_uz").replace("@", "")
 
-OWNER_ID = int(os.getenv("ADMIN_ID", 0))
-CH_ID = os.getenv("CHANNEL_ID")
-CH_NAME = os.getenv("CHANNEL_USERNAME", "ish_reja_uz").replace("@", "")
+# Webhook sozlamalari (Alwaysdata uchun muhim)
+# WEBHOOK_HOST: https://sizning_loginingiz.alwaysdata.net
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST") 
+WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
+WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+
+# Web server sozlamalari
+WEB_SERVER_HOST = "::" # IPv6 va IPv4 uchun (Alwaysdata uchun mos)
+WEB_SERVER_PORT = int(os.getenv("PORT", 8100))
+
+# --- BOT VA BAZA ---
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+dp = Dispatcher()
+db = Database("bot_database.db")
 
 class AdminStates(StatesGroup):
-    waiting_for_time = State()
+    waiting_for_time = State() # Apscheduler o'rniga oddiy yuborish qoldirildi (soddalik uchun)
     waiting_for_tpl = State()
-    waiting_for_footer = State()
 
-# --- KLAVIATURALAR ---
-def get_main_kb():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📅 Rejalarni ko'rish"), KeyboardButton(text="📈 Batafsil statistika")],
-        [KeyboardButton(text="📁 Kategoriyalar"), KeyboardButton(text="⚙️ Sozlamalar")],
-        [KeyboardButton(text="💎 Adminlarni boshqarish")]
-    ], resize_keyboard=True)
+# --- HANDLERLAR ---
 
-def get_settings_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📝 Shablon", callback_data="set_tpl"), InlineKeyboardButton(text="🖋 Footer", callback_data="set_footer")],
-        [InlineKeyboardButton(text="📅 Chorak", callback_data="choose_q"), InlineKeyboardButton(text="🗑 Tozalash", callback_data="clear_cat")]
-    ])
+@dp.message(F.text == "/start")
+async def cmd_start(m: Message):
+    if await db.is_admin(m.from_user.id, ADMIN_ID):
+        await m.answer(f"👋 Salom Admin! Bot webhook rejimida ishlamoqda.\nURL: {WEBHOOK_URL}")
+    else:
+        await m.answer("Bot ishlamoqda.")
 
-# --- ASOSIY FUNKSIYALAR ---
+# Fayllarni ishlash (Eski kod mantig'i saqlandi)
 async def process_and_send(file_path, original_name):
     try:
         new_name = smart_rename(original_name)
@@ -61,98 +68,69 @@ async def process_and_send(file_path, original_name):
         elif new_name.lower().endswith('.pdf'): add_pdf_watermark(new_path)
         elif new_name.lower().endswith('.docx'): edit_docx(new_path)
 
-        cat = "BSB_CHSB" if any(x in new_name.lower() for x in ["bsb", "chsb"]) else \
-              ("Yuqori" if any(x in new_name.lower() for x in ["5-","6-","7-","8-","9-","10-","11-"]) else "Boshlang'ich")
-
         caption_tpl = await db.get_setting('post_caption') or "{name} | @{channel}"
         footer = await db.get_setting('footer_text') or ""
         
         sent = await bot.send_document(
-            CH_ID, 
+            CHANNEL_ID, 
             FSInputFile(new_path), 
-            caption=caption_tpl.format(name=new_name, channel=CH_NAME) + f"\n\n{footer}"
+            caption=caption_tpl.format(name=new_name, channel=CHANNEL_USERNAME) + f"\n\n{footer}"
         )
-        
-        await db.add_to_catalog(new_name, cat, f"https://t.me/{CH_NAME}/{sent.message_id}", sent.message_id)
+        await db.add_to_catalog(new_name, "General", f"https://t.me/{CHANNEL_USERNAME}/{sent.message_id}", sent.message_id)
         if os.path.exists(new_path): os.remove(new_path)
     except Exception as e:
-        logger.error(f"Fayl yuborishda xatolik: {e}")
-
-# --- HANDLERLAR ---
-@dp.message(F.text == "/start")
-async def cmd_start(m: Message):
-    if await db.is_admin(m.from_user.id, OWNER_ID):
-        await m.answer("🛡 <b>Admin Panel yuklandi.</b>", reply_markup=get_main_kb())
-
-@dp.message(F.text.startswith("/add_admin"))
-async def add_admin_handler(m: Message):
-    if m.from_user.id != OWNER_ID:
-        return await m.answer("❌ Bu buyruq faqat asosiy ega uchun!")
-    try:
-        new_id = int(m.text.split()[1])
-        await db.add_admin(new_id)
-        await m.answer(f"✅ Yangi admin qo'shildi! ID: <code>{new_id}</code>")
-    except:
-        await m.answer("⚠️ Format: <code>/add_admin ID</code>")
-
-@dp.callback_query(F.data == "set_tpl")
-async def set_template(call: CallbackQuery, state: FSMContext):
-    await call.message.answer("📝 Yangi shablon matnini yuboring.")
-    await state.set_state(AdminStates.waiting_for_tpl)
-    await call.answer()
-
-@dp.message(AdminStates.waiting_for_tpl)
-async def save_tpl(m: Message, state: FSMContext):
-    await db.set_setting('post_caption', m.text)
-    await m.answer("✅ Shablon saqlandi!")
-    await state.clear()
+        logger.error(f"Error processing {original_name}: {e}")
 
 @dp.message(F.document)
-async def handle_doc(m: Message, state: FSMContext):
-    if not await db.is_admin(m.from_user.id, OWNER_ID): return
+async def handle_doc(m: Message):
+    if not await db.is_admin(m.from_user.id, ADMIN_ID): return
     os.makedirs("downloads", exist_ok=True)
+    
     path = f"downloads/{m.document.file_name}"
     await bot.download(m.document, destination=path)
-    await state.update_data(f_path=path, f_name=m.document.file_name)
-    await m.answer("📅 Vaqt (DD.MM.YYYY HH:MM) yoki hozir uchun <b>0</b>:")
-    await state.set_state(AdminStates.waiting_for_time)
-
-@dp.message(AdminStates.waiting_for_time)
-async def schedule_step(m: Message, state: FSMContext):
-    data = await state.get_data()
-    if m.text == "0":
-        if data['f_name'].endswith(".zip"):
-            ex_dir = f"downloads/zip_{datetime.now().timestamp()}"
-            with zipfile.ZipFile(data['f_path'], 'r') as z: z.extractall(ex_dir)
-            for r, d, fs in os.walk(ex_dir):
-                for f in fs:
-                    if not f.startswith('.') and "__MACOSX" not in r: 
-                        await process_and_send(os.path.join(r, f), f)
-            shutil.rmtree(ex_dir)
-        else:
-            await process_and_send(data['f_path'], data['f_name'])
-        await m.answer("✅ Bajarildi.")
+    
+    msg = await m.answer("⏳ Fayl qabul qilindi, ishlanmoqda...")
+    
+    if m.document.file_name.endswith(".zip"):
+        ex_dir = f"downloads/zip_{datetime.now().timestamp()}"
+        with zipfile.ZipFile(path, 'r') as z: z.extractall(ex_dir)
+        for r, d, fs in os.walk(ex_dir):
+            for f in fs:
+                if not f.startswith('.') and "__MACOSX" not in r: 
+                    await process_and_send(os.path.join(r, f), f)
+        shutil.rmtree(ex_dir)
     else:
-        try:
-            run_time = datetime.strptime(m.text, "%d.%m.%Y %H:%M")
-            scheduler.add_job(process_and_send, 'date', run_date=run_time, args=[data['f_path'], data['f_name']])
-            await m.answer(f"⏳ Rejalashtirildi: {m.text}")
-        except:
-            await m.answer("❌ Xato format. Namuna: 06.01.2025 23:00")
-    await state.clear()
+        await process_and_send(path, m.document.file_name)
+    
+    await msg.edit_text("✅ Bajarildi!")
 
-async def handle_root(request): return web.Response(text="Bot Live 🚀")
-
-async def main():
+# --- ISHGA TUSHIRISH (LIFESPAN) ---
+async def on_startup(bot: Bot):
     await db.create_tables()
-    scheduler.start()
+    # Webhookni o'rnatish
+    await bot.set_webhook(WEBHOOK_URL)
+    logger.info(f"Webhook o'rnatildi: {WEBHOOK_URL}")
+
+def main():
+    # Web dasturni sozlash
     app = web.Application()
-    app.router.add_get('/', handle_root)
-    runner = web.AppRunner(app); await runner.setup()
-    port = int(os.environ.get("PORT", 8100))
-    await web.TCPSite(runner, '0.0.0.0', port).start()
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    
+    # Telegramdan keladigan so'rovlarni qabul qiluvchi handler
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+    )
+    # So'rov yo'nalishini ro'yxatga olish
+    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+    
+    # Ilova va botni bog'lash
+    setup_application(app, dp, bot=bot)
+    
+    # Startup funksiyasini qo'shish
+    app.on_startup.append(lambda x: on_startup(bot))
+
+    # Serverni ishga tushirish
+    web.run_app(app, host=WEB_SERVER_HOST, port=WEB_SERVER_PORT)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
