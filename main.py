@@ -17,7 +17,6 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger(__name__)
 
-# Baza yo'lini Alwaysdata muhitiga moslash
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 db_path = os.path.join(BASE_DIR, "bot_database.db")
 db = Database(db_path) 
@@ -38,7 +37,7 @@ class AdminStates(StatesGroup):
     waiting_for_tpl = State()
     waiting_for_footer = State()
 
-# --- KLAVIATURALAR (Original) ---
+# --- KLAVIATURALAR ---
 def get_main_kb():
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📅 Rejalarni ko'rish"), KeyboardButton(text="📈 Batafsil statistika")],
@@ -78,7 +77,7 @@ async def process_and_send(file_path, original_name):
         await db.add_to_catalog(new_name, cat, f"https://t.me/{CH_NAME}/{sent.message_id}", sent.message_id)
         if os.path.exists(new_path): os.remove(new_path)
     except Exception as e:
-        logger.error(f"Fayl yuborishda xatolik: {e}")
+        logger.error(f"Xatolik: {e}")
 
 # --- HANDLERLAR ---
 @dp.message(F.text == "/start")
@@ -86,25 +85,48 @@ async def cmd_start(m: Message):
     if await db.is_admin(m.from_user.id, OWNER_ID):
         await m.answer("🛡 <b>Admin Panel yuklandi.</b>", reply_markup=get_main_kb())
 
+@dp.message(F.text == "💎 Adminlarni boshqarish")
+async def manage_admins(m: Message):
+    if m.from_user.id != OWNER_ID: return
+    admins = await db.get_admins()
+    text = "👥 <b>Adminlar ro'yxati:</b>\n\n"
+    text += f"👑 Owner: <code>{OWNER_ID}</code>\n"
+    for adm in admins:
+        text += f"👤 Admin: <code>{adm}</code>\n"
+    text += "\nQo'shish uchun: <code>/add_admin ID</code>"
+    await m.answer(text)
+
 @dp.message(F.text.startswith("/add_admin"))
 async def add_admin_handler(m: Message):
     if m.from_user.id != OWNER_ID: return
     try:
         new_id = int(m.text.split()[1])
         await db.add_admin(new_id)
-        await m.answer(f"✅ Yangi admin qo'shildi! ID: <code>{new_id}</code>")
+        await m.answer(f"✅ Yangi admin qo'shildi: {new_id}")
     except:
-        await m.answer("⚠️ Format: <code>/add_admin ID</code>")
+        await m.answer("Format: /add_admin ID")
 
-@dp.message(F.text == "📅 Rejalarni ko'rish")
-async def view_plans(m: Message):
+@dp.message(F.text == "📁 Kategoriyalar")
+async def show_cats(m: Message):
     if not await db.is_admin(m.from_user.id, OWNER_ID): return
-    plans = scheduler.get_jobs()
-    if not plans: return await m.answer("📭 Rejalashtirilgan fayllar yo'q.")
-    text = "⏳ <b>Kutilayotgan rejalar:</b>\n\n"
-    for job in plans:
-        text += f"📄 {job.args[1]}\n⏰ {job.next_run_time.strftime('%d.%m.%Y %H:%M')}\n\n"
-    await m.answer(text)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Boshlang'ich", callback_data="cat_Boshlang'ich")],
+        [InlineKeyboardButton(text="Yuqori sinflar", callback_data="cat_Yuqori")],
+        [InlineKeyboardButton(text="BSB/CHSB", callback_data="cat_BSB_CHSB")]
+    ])
+    await m.answer("📁 Kategoriyani tanlang:", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("cat_"))
+async def create_catalog(c: CallbackQuery):
+    cat = c.data.split("_", 1)[1]
+    items = await db.get_catalog(cat)
+    if not items: return await c.answer("Fayllar topilmadi", show_alert=True)
+    q = await db.get_setting('quarter') or "1"
+    text = f"<b>{q}-CHORAK REJALARI</b>\n\n"
+    for i, (name, link) in enumerate(items, 1):
+        text += f"{i}. <a href='{link}'>{name}</a>\n"
+    await bot.send_message(CH_ID, text, disable_web_page_preview=True)
+    await c.answer("Kanalga yuborildi!")
 
 @dp.message(F.text == "📈 Batafsil statistika")
 async def show_stats(m: Message):
@@ -115,13 +137,13 @@ async def show_stats(m: Message):
 @dp.message(F.text == "⚙️ Sozlamalar")
 async def settings_menu(m: Message):
     if await db.is_admin(m.from_user.id, OWNER_ID):
-        await m.answer("⚙️ <b>Sozlamalar bo'limi:</b>", reply_markup=get_settings_kb())
+        await m.answer("⚙️ <b>Sozlamalar:</b>", reply_markup=get_settings_kb())
 
 @dp.message(F.document)
 async def handle_doc(m: Message, state: FSMContext):
     if not await db.is_admin(m.from_user.id, OWNER_ID): return
-    os.makedirs(os.path.join(BASE_DIR, "downloads"), exist_ok=True)
     path = os.path.join(BASE_DIR, "downloads", m.document.file_name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     await bot.download(m.document, destination=path)
     await state.update_data(f_path=path, f_name=m.document.file_name)
     await m.answer("📅 Vaqt (DD.MM.YYYY HH:MM) yoki hozir uchun <b>0</b>:")
@@ -131,16 +153,7 @@ async def handle_doc(m: Message, state: FSMContext):
 async def schedule_step(m: Message, state: FSMContext):
     data = await state.get_data()
     if m.text == "0":
-        if data['f_name'].endswith(".zip"):
-            ex_dir = os.path.join(BASE_DIR, f"downloads/zip_{datetime.now().timestamp()}")
-            with zipfile.ZipFile(data['f_path'], 'r') as z: z.extractall(ex_dir)
-            for r, d, fs in os.walk(ex_dir):
-                for f in fs:
-                    if not f.startswith('.') and "__MACOSX" not in r: 
-                        await process_and_send(os.path.join(r, f), f)
-            shutil.rmtree(ex_dir)
-        else:
-            await process_and_send(data['f_path'], data['f_name'])
+        await process_and_send(data['f_path'], data['f_name'])
         await m.answer("✅ Bajarildi.")
     else:
         try:
@@ -148,10 +161,10 @@ async def schedule_step(m: Message, state: FSMContext):
             scheduler.add_job(process_and_send, 'date', run_date=run_time, args=[data['f_path'], data['f_name']])
             await m.answer(f"⏳ Rejalashtirildi: {m.text}")
         except:
-            await m.answer("❌ Xato format. Namuna: 10.01.2026 23:00")
+            await m.answer("❌ Xato format.")
     await state.clear()
 
-# --- WEB SERVER & MAIN (Alwaysdata Moslashuvi) ---
+# --- WEB SERVER & MAIN ---
 async def handle_root(request): return web.Response(text="Bot Live 🚀")
 
 async def main():
@@ -160,11 +173,8 @@ async def main():
     app = web.Application()
     app.router.add_get('/', handle_root)
     runner = web.AppRunner(app); await runner.setup()
-    
-    # Alwaysdata PORTiga moslash (8100 yoki berilgan PORT)
     port = int(os.environ.get("PORT", 8100)) 
     await web.TCPSite(runner, '0.0.0.0', port).start()
-    
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
