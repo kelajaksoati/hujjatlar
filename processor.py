@@ -22,28 +22,43 @@ def edit_excel(path):
         for ws in wb.worksheets:
             ws.insert_rows(1)
             ws['A1'] = "@ish_reja_uz kanali uchun maxsus tayyorlandi"
-            ws['A1'].font = Font(bold=True, color="FF0000", size=12)
+            ws['A1'].font = Font(bold=True, color="FF0000", size=11)
         wb.save(path)
-    except Exception as e: print(f"Excel error: {e}")
+    except Exception as e:
+        print(f"Excel error: {e}")
 
 def add_pdf_watermark(path):
     try:
-        reader = PdfReader(path); writer = PdfWriter()
-        packet = BytesIO(); can = canvas.Canvas(packet)
-        can.setFont("Helvetica-Bold", 45); can.setFillGray(0.5, 0.15); can.saveState()
-        can.translate(300, 450); can.rotate(45)
-        can.drawCentredString(0, 0, "@ish_reja_uz"); can.restoreState(); can.save()
-        packet.seek(0); watermark_page = PdfReader(packet).pages[0]
+        reader = PdfReader(path)
+        writer = PdfWriter()
+        packet = BytesIO()
+        can = canvas.Canvas(packet)
+        can.setFont("Helvetica-Bold", 40)
+        can.setFillGray(0.5, 0.2)
+        can.saveState()
+        can.translate(300, 450)
+        can.rotate(45)
+        can.drawCentredString(0, 0, "@ish_reja_uz")
+        can.restoreState()
+        can.save()
+        packet.seek(0)
+        watermark_page = PdfReader(packet).pages[0]
         for page in reader.pages:
             page.merge_page(watermark_page)
             writer.add_page(page)
-        with open(path, "wb") as f: writer.write(f)
-    except Exception as e: print(f"PDF error: {e}")
+        with open(path, "wb") as f:
+            writer.write(f)
+    except Exception as e:
+        print(f"PDF error: {e}")
 
 def edit_docx(path):
     try:
         doc = Document(path)
-        if doc.paragraphs: doc.paragraphs[0].insert_paragraph_before("@ish_reja_uz kanali uchun maxsus tayyorlandi")
-        else: doc.add_paragraph("@ish_reja_uz kanali uchun maxsus tayyorlandi")
+        text = "@ish_reja_uz kanali uchun maxsus tayyorlandi"
+        if doc.paragraphs:
+            doc.paragraphs[0].insert_paragraph_before(text)
+        else:
+            doc.add_paragraph(text)
         doc.save(path)
-    except Exception as e: print(f"Docx error: {e}")
+    except Exception as e:
+        print(f"Docx error: {e}")
