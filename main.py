@@ -29,15 +29,16 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "ish_reja_uz").replace("@", "")
 
-# Webhook sozlamalari (Alwaysdata uchun muhim)
-# WEBHOOK_HOST: https://sizning_loginingiz.alwaysdata.net
+# Webhook sozlamalari
+# Alwaysdata uchun: https://loginingiz.alwaysdata.net
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST") 
 WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
-# Web server sozlamalari
-WEB_SERVER_HOST = "::" # IPv6 va IPv4 uchun (Alwaysdata uchun mos)
-WEB_SERVER_PORT = int(os.getenv("PORT", 8100))
+# Web server sozlamalari - BU YERDA XATOLIK TUZATILDI
+WEB_SERVER_HOST = "0.0.0.0" 
+# Agar .env da PORT bo'lmasa, Alwaysdata 8100 portini ishlatadi
+WEB_SERVER_PORT = int(os.getenv("WEB_SERVER_PORT", 8100)) 
 
 # --- BOT VA BAZA ---
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -45,7 +46,7 @@ dp = Dispatcher()
 db = Database("bot_database.db")
 
 class AdminStates(StatesGroup):
-    waiting_for_time = State() # Apscheduler o'rniga oddiy yuborish qoldirildi (soddalik uchun)
+    waiting_for_time = State()
     waiting_for_tpl = State()
 
 # --- HANDLERLAR ---
@@ -57,7 +58,6 @@ async def cmd_start(m: Message):
     else:
         await m.answer("Bot ishlamoqda.")
 
-# Fayllarni ishlash (Eski kod mantig'i saqlandi)
 async def process_and_send(file_path, original_name):
     try:
         new_name = smart_rename(original_name)
@@ -108,28 +108,22 @@ async def handle_doc(m: Message):
 async def on_startup(bot: Bot):
     await db.create_tables()
     # Webhookni o'rnatish
-    await bot.set_webhook(WEBHOOK_URL)
+    await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
     logger.info(f"Webhook o'rnatildi: {WEBHOOK_URL}")
 
 def main():
-    # Web dasturni sozlash
     app = web.Application()
     
-    # Telegramdan keladigan so'rovlarni qabul qiluvchi handler
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
     )
-    # So'rov yo'nalishini ro'yxatga olish
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
     
-    # Ilova va botni bog'lash
     setup_application(app, dp, bot=bot)
-    
-    # Startup funksiyasini qo'shish
     app.on_startup.append(lambda x: on_startup(bot))
 
-    # Serverni ishga tushirish
+    # Portni aniq ko'rsatamiz
     web.run_app(app, host=WEB_SERVER_HOST, port=WEB_SERVER_PORT)
 
 if __name__ == "__main__":
