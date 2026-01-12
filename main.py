@@ -1,4 +1,4 @@
-import asyncio, os, zipfile, shutil, aiohttp, logging, sys
+import asyncio, os, logging, sys
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.client.default import DefaultBotProperties 
@@ -71,7 +71,7 @@ async def process_and_send(file_path, original_name):
         await db.add_to_catalog(new_name, cat, f"https://t.me/{CH_NAME}/{sent.message_id}", sent.message_id)
         if os.path.exists(new_path): os.remove(new_path)
     except Exception as e:
-        logger.error(f"Xatolik: {e}")
+        logger.error(f"Xatolik process_and_send'da: {e}")
 
 # --- HANDLERLAR ---
 @dp.message(F.text == "/start")
@@ -84,7 +84,6 @@ async def settings_menu(m: Message):
     if await db.is_admin(m.from_user.id, OWNER_ID):
         await m.answer("⚙️ <b>Sozlamalar bo'limi:</b>", reply_markup=get_settings_kb())
 
-# --- SOZLAMALARNI BOSHQARISH (CALLBACKS) ---
 @dp.callback_query(F.data == "set_tpl")
 async def set_tpl_start(c: CallbackQuery, state: FSMContext):
     await c.message.answer("📝 Yangi shablonni yuboring.\nNamuna: <code>{name} fayli @{channel} kanalidan</code>")
@@ -136,16 +135,19 @@ async def clear_catalog_confirm(c: CallbackQuery):
 async def clear_catalog_done(c: CallbackQuery):
     await db.clear_catalog()
     await c.message.edit_text("🗑 Katalog muvaffaqiyatli tozalandi!")
+    await c.answer()
 
-# --- QOLGAN FUNKSIYALAR ---
+@dp.callback_query(F.data == "cancel_clear")
+async def cancel_clear(c: CallbackQuery):
+    await c.message.edit_text("⚙️ <b>Sozlamalar bo'limi:</b>", reply_markup=get_settings_kb())
+    await c.answer()
+
 @dp.message(F.text == "💎 Adminlarni boshqarish")
 async def manage_admins(m: Message):
     if not await db.is_admin(m.from_user.id, OWNER_ID): return
-    try:
-        admins = await db.get_admins()
-        text = f"👥 <b>Adminlar ro'yxati:</b>\n\n👑 Asosiy: <code>{OWNER_ID}</code>\n"
-        for adm in admins: text += f"👤 Yordamchi: <code>{adm[0]}</code>\n"
-    except: text = f"👥 <b>Adminlar:</b>\n\n👑 Asosiy: <code>{OWNER_ID}</code>\n"
+    admins = await db.get_admins()
+    text = f"👥 <b>Adminlar ro'yxati:</b>\n\n👑 Asosiy: <code>{OWNER_ID}</code>\n"
+    for adm in admins: text += f"👤 Yordamchi: <code>{adm[0]}</code>\n"
     text += "\nQo'shish: <code>/add_admin ID</code>"
     await m.answer(text)
 
@@ -165,7 +167,7 @@ async def handle_doc(m: Message, state: FSMContext):
     path = os.path.join(BASE_DIR, "downloads", m.document.file_name)
     await bot.download(m.document, destination=path)
     await state.update_data(f_path=path, f_name=m.document.file_name)
-    await m.answer("📅 Vaqt (DD.MM.YYYY HH:MM) yoki hozir uchun <b>0</b>:")
+    await m.answer("📅 Vaqtni kiriting (DD.MM.YYYY HH:MM)\nHozir yuborish uchun <b>0</b>:")
     await state.set_state(AdminStates.waiting_for_time)
 
 @dp.message(AdminStates.waiting_for_time)
@@ -173,13 +175,15 @@ async def schedule_step(m: Message, state: FSMContext):
     data = await state.get_data()
     if m.text == "0":
         await process_and_send(data['f_path'], data['f_name'])
-        await m.answer("✅ Bajarildi.")
+        await m.answer("✅ Fayl kanalga yuborildi.")
     else:
         try:
             run_time = datetime.strptime(m.text, "%d.%m.%Y %H:%M")
             scheduler.add_job(process_and_send, 'date', run_date=run_time, args=[data['f_path'], data['f_name']])
-            await m.answer(f"⏳ Rejalashtirildi: {m.text}")
-        except: await m.answer("❌ Xato format. Namuna: 10.01.2026 23:00")
+            await m.answer(f"⏳ Fayl rejalashtirildi: {m.text}")
+        except: 
+            await m.answer("❌ Xato format. Namuna: 10.01.2026 23:00")
+            return
     await state.clear()
 
 @dp.message(F.text == "📁 Kategoriyalar")
@@ -193,15 +197,18 @@ async def show_cats(m: Message):
     await m.answer("📁 Kategoriyani tanlang:", reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("cat_"))
-async def create_catalog(c: CallbackQuery):
+async def create_catalog_handler(c: CallbackQuery):
     cat = c.data.split("_", 1)[1]
     items = await db.get_catalog(cat)
-    if not items: return await c.answer("Fayllar topilmadi", show_alert=True)
+    if not items: 
+        await c.answer("Ushbu kategoriya bo'yicha fayllar topilmadi", show_alert=True)
+        return
     q = await db.get_setting('quarter') or "?"
-    text = f"<b>{q}-CHORAK REJALARI ({cat})</b>\n\n"
-    for i, (name, link) in enumerate(items, 1): text += f"{i}. <a href='{link}'>{name}</a>\n"
+    text = f"📂 <b>{q}-CHORAK REJALARI ({cat})</b>\n\n"
+    for i, (name, link) in enumerate(items, 1): 
+        text += f"{i}. <a href='{link}'>{name}</a>\n"
     await bot.send_message(CH_ID, text, disable_web_page_preview=True)
-    await c.answer("Kanalga yuborildi!")
+    await c.answer("Katalog kanalga yuborildi!")
 
 @dp.message(F.text == "📈 Batafsil statistika")
 async def show_stats(m: Message):
