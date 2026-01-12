@@ -8,13 +8,40 @@ from docx import Document
 
 def smart_rename(filename):
     base_name, extension = os.path.splitext(filename)
+    # Nomdagi belgilarni tozalash
     clean_name = base_name.replace("_", " ").replace("-", " ").strip()
-    if 'bsb' in clean_name.lower():
-        name_only = clean_name.lower().replace('bsb', '').strip()
-        clean_name = f"BSB {name_only.upper()}"
+    
+    # Rus maktablari uchun nomni formatlash
+    if any(x in clean_name.lower() for x in ["rus", "klass", "рус", "класс"]):
+        clean_name = clean_name.replace("rus", "").replace("рус", "").strip()
+        final_name = f"RUS_{clean_name.upper()}"
+    # BSB/CHSB uchun nomni formatlash
+    elif any(x in clean_name.lower() for x in ["bsb", "chsb", "сор", "соч"]):
+        name_only = clean_name.lower().replace('bsb', '').replace('chsb', '').strip()
+        final_name = f"BSB_CHSB_{name_only.upper()}"
     else:
-        clean_name = clean_name.title()
-    return f"@ISH_REJA_UZ_{clean_name.replace(' ', '_')}{extension.lower()}"
+        final_name = clean_name.title().replace(" ", "_")
+        
+    return f"@ISH_REJA_UZ_{final_name}{extension.lower()}"
+
+# --- KATEGORIYANI ANIQLASH (Yangi qo'shildi) ---
+def get_category_by_name(new_name):
+    name_lower = new_name.lower()
+    
+    # 1. BSB / CHSB / СОР / СОЧ
+    if any(x in name_lower for x in ["bsb", "chsb", "сор", "соч"]):
+        return "BSB_CHSB"
+    
+    # 2. Rus maktablari
+    if any(x in name_lower for x in ["rus", "klass", "рус", "класс"]):
+        return "Rus_maktab"
+    
+    # 3. Yuqori sinflar
+    if any(x in name_lower for x in ["5-","6-","7-","8-","9-","10-","11-"]):
+        return "Yuqori"
+    
+    # 4. Default: Boshlang'ich
+    return "Boshlang'ich"
 
 def edit_excel(path):
     try:
