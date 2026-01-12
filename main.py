@@ -54,6 +54,11 @@ def get_back_to_settings_kb():
         [InlineKeyboardButton(text="🔙 Bekor qilish", callback_data="back_to_settings")]
     ])
 
+def get_inline_back():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_to_main")]
+    ])
+
 # --- ASOSIY FUNKSIYA ---
 async def process_and_send(file_path, original_name):
     try:
@@ -81,7 +86,6 @@ async def process_and_send(file_path, original_name):
 
 # --- HANDLERLAR ---
 
-# ORQAGA QAYTISH HANDLERLARI
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main_handler(c: CallbackQuery):
     await c.message.delete()
@@ -106,7 +110,7 @@ async def settings_menu(m: Message):
 
 @dp.callback_query(F.data == "set_tpl")
 async def set_tpl_start(c: CallbackQuery, state: FSMContext):
-    await c.message.edit_text("📝 Yangi shablonni yuboring.\nNamuna: <code>{name} fayli @{channel} kanalidan</code>", reply_markup=get_back_to_settings_kb())
+    await c.message.edit_text("📝 Yangi shablonni yuboring:", reply_markup=get_back_to_settings_kb())
     await state.set_state(AdminStates.waiting_for_tpl)
     await c.answer()
 
@@ -118,7 +122,7 @@ async def save_tpl(m: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "set_footer")
 async def set_footer_start(c: CallbackQuery, state: FSMContext):
-    await c.message.edit_text("🖋 Post tagiga chiqadigan footer matnini yuboring:", reply_markup=get_back_to_settings_kb())
+    await c.message.edit_text("🖋 Yangi footer matnini yuboring:", reply_markup=get_back_to_settings_kb())
     await state.set_state(AdminStates.waiting_for_footer)
     await c.answer()
 
@@ -150,7 +154,7 @@ async def clear_catalog_confirm(c: CallbackQuery):
         [InlineKeyboardButton(text="❌ HA, o'chirish", callback_data="confirm_clear")],
         [InlineKeyboardButton(text="🔙 Bekor qilish", callback_data="back_to_settings")]
     ])
-    await c.message.edit_text("⚠️ <b>DIQQAT!</b> Katalogni tozalamoqchimisiz?", reply_markup=kb)
+    await c.message.edit_text("⚠️ Katalogni tozalamoqchimisiz?", reply_markup=kb)
 
 @dp.callback_query(F.data == "confirm_clear")
 async def clear_catalog_done(c: CallbackQuery):
@@ -162,10 +166,11 @@ async def clear_catalog_done(c: CallbackQuery):
 async def manage_admins(m: Message):
     if not await db.is_admin(m.from_user.id, OWNER_ID): return
     admins = await db.get_admins()
-    text = f"👥 <b>Adminlar ro'yxati:</b>\n\n👑 Asosiy: <code>{OWNER_ID}</code>\n"
+    text = f"👥 <b>Adminlar:</b>\n\n👑 Asosiy: <code>{OWNER_ID}</code>\n"
     for adm in admins: text += f"👤 Yordamchi: <code>{adm[0]}</code>\n"
-    text += "\nQo'shish: <code>/add_admin ID</code>"
-    await m.answer(text)
+    text += "\n➕ Qo'shish: `/add_admin ID`"
+    text += "\n➖ O'chirish: `/remove_admin ID`"
+    await m.answer(text, reply_markup=get_inline_back())
 
 @dp.message(F.text.startswith("/add_admin"))
 async def process_add_admin(m: Message):
@@ -173,18 +178,26 @@ async def process_add_admin(m: Message):
     try:
         new_id = int(m.text.split()[1])
         await db.add_admin(new_id)
-        await m.answer(f"✅ Foydalanuvchi <code>{new_id}</code> qo'shildi.")
-    except:
-        await m.answer("❌ Xato! Foydalanish: /add_admin ID")
+        await m.answer(f"✅ Admin <code>{new_id}</code> qo'shildi.")
+    except: await m.answer("❌ Xato! Namuna: `/add_admin 12345`")
+
+@dp.message(F.text.startswith("/remove_admin"))
+async def process_remove_admin(m: Message):
+    if m.from_user.id != OWNER_ID: return
+    try:
+        rem_id = int(m.text.split()[1])
+        await db.remove_admin(rem_id)
+        await m.answer(f"✅ Admin <code>{rem_id}</code> o'chirildi.")
+    except: await m.answer("❌ Xato! Namuna: `/remove_admin 12345`")
 
 @dp.message(F.text == "📅 Rejalarni ko'rish")
 async def view_plans(m: Message):
     if not await db.is_admin(m.from_user.id, OWNER_ID): return
     plans = scheduler.get_jobs()
-    if not plans: return await m.answer("📭 Rejalashtirilgan fayllar yo'q.")
+    if not plans: return await m.answer("📭 Rejalar yo'q.", reply_markup=get_inline_back())
     text = "⏳ <b>Kutilayotgan rejalar:</b>\n\n"
     for job in plans: text += f"📄 {job.args[1]}\n⏰ {job.next_run_time.strftime('%d.%m.%Y %H:%M')}\n\n"
-    await m.answer(text)
+    await m.answer(text, reply_markup=get_inline_back())
 
 @dp.message(F.document)
 async def handle_doc(m: Message, state: FSMContext):
@@ -201,12 +214,12 @@ async def schedule_step(m: Message, state: FSMContext):
     data = await state.get_data()
     if m.text == "0":
         await process_and_send(data['f_path'], data['f_name'])
-        await m.answer("✅ Fayl kanalga yuborildi.")
+        await m.answer("✅ Fayl yuborildi.")
     else:
         try:
             run_time = datetime.strptime(m.text, "%d.%m.%Y %H:%M")
             scheduler.add_job(process_and_send, 'date', run_date=run_time, args=[data['f_path'], data['f_name']])
-            await m.answer(f"⏳ Fayl rejalashtirildi: {m.text}")
+            await m.answer(f"⏳ Rejalashtirildi: {m.text}")
         except: 
             await m.answer("❌ Xato format. Namuna: 10.01.2026 23:00")
             return
@@ -218,7 +231,8 @@ async def show_cats(m: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Boshlang'ich", callback_data="cat_Boshlang'ich")],
         [InlineKeyboardButton(text="Yuqori sinflar", callback_data="cat_Yuqori")],
-        [InlineKeyboardButton(text="BSB/CHSB", callback_data="cat_BSB_CHSB")]
+        [InlineKeyboardButton(text="BSB/CHSB", callback_data="cat_BSB_CHSB")],
+        [InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_to_main")]
     ])
     await m.answer("📁 Kategoriyani tanlang:", reply_markup=kb)
 
@@ -227,20 +241,19 @@ async def create_catalog_handler(c: CallbackQuery):
     cat = c.data.split("_", 1)[1]
     items = await db.get_catalog(cat)
     if not items: 
-        await c.answer("Ushbu kategoriya bo'yicha fayllar topilmadi", show_alert=True)
+        await c.answer("Fayllar topilmadi", show_alert=True)
         return
     q = await db.get_setting('quarter') or "?"
     text = f"📂 <b>{q}-CHORAK REJALARI ({cat})</b>\n\n"
-    for i, (name, link) in enumerate(items, 1): 
-        text += f"{i}. <a href='{link}'>{name}</a>\n"
+    for i, (name, link) in enumerate(items, 1): text += f"{i}. <a href='{link}'>{name}</a>\n"
     await bot.send_message(CH_ID, text, disable_web_page_preview=True)
-    await c.answer("Katalog kanalga yuborildi!")
+    await c.answer("Katalog yuborildi!")
 
 @dp.message(F.text == "📈 Batafsil statistika")
 async def show_stats(m: Message):
     if not await db.is_admin(m.from_user.id, OWNER_ID): return
     count = await db.get_stats()
-    await m.answer(f"📊 <b>Statistika</b>\n\n✅ Jami fayllar: <b>{count} ta</b>\n📡 Kanal: @{CH_NAME}")
+    await m.answer(f"📊 <b>Statistika</b>\n\n✅ Jami fayllar: <b>{count} ta</b>", reply_markup=get_inline_back())
 
 async def handle_root(request): return web.Response(text="Bot Live 🚀")
 
