@@ -45,7 +45,13 @@ def get_main_kb():
 def get_settings_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Shablon", callback_data="set_tpl"), InlineKeyboardButton(text="🖋 Footer", callback_data="set_footer")],
-        [InlineKeyboardButton(text="📅 Chorak", callback_data="choose_q"), InlineKeyboardButton(text="🗑 Tozalash", callback_data="clear_cat")]
+        [InlineKeyboardButton(text="📅 Chorak", callback_data="choose_q"), InlineKeyboardButton(text="🗑 Tozalash", callback_data="clear_cat")],
+        [InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_to_main")]
+    ])
+
+def get_back_to_settings_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Bekor qilish", callback_data="back_to_settings")]
     ])
 
 # --- ASOSIY FUNKSIYA ---
@@ -74,6 +80,20 @@ async def process_and_send(file_path, original_name):
         logger.error(f"Xatolik process_and_send'da: {e}")
 
 # --- HANDLERLAR ---
+
+# ORQAGA QAYTISH HANDLERLARI
+@dp.callback_query(F.data == "back_to_main")
+async def back_to_main_handler(c: CallbackQuery):
+    await c.message.delete()
+    await c.message.answer("🏠 Asosiy menyu:", reply_markup=get_main_kb())
+    await c.answer()
+
+@dp.callback_query(F.data == "back_to_settings")
+async def back_to_settings_handler(c: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await c.message.edit_text("⚙️ <b>Sozlamalar bo'limi:</b>", reply_markup=get_settings_kb())
+    await c.answer()
+
 @dp.message(F.text == "/start")
 async def cmd_start(m: Message):
     if await db.is_admin(m.from_user.id, OWNER_ID):
@@ -86,33 +106,34 @@ async def settings_menu(m: Message):
 
 @dp.callback_query(F.data == "set_tpl")
 async def set_tpl_start(c: CallbackQuery, state: FSMContext):
-    await c.message.answer("📝 Yangi shablonni yuboring.\nNamuna: <code>{name} fayli @{channel} kanalidan</code>")
+    await c.message.edit_text("📝 Yangi shablonni yuboring.\nNamuna: <code>{name} fayli @{channel} kanalidan</code>", reply_markup=get_back_to_settings_kb())
     await state.set_state(AdminStates.waiting_for_tpl)
     await c.answer()
 
 @dp.message(AdminStates.waiting_for_tpl)
 async def save_tpl(m: Message, state: FSMContext):
     await db.set_setting('post_caption', m.text)
-    await m.answer("✅ Post shabloni saqlandi.")
+    await m.answer("✅ Post shabloni saqlandi.", reply_markup=get_main_kb())
     await state.clear()
 
 @dp.callback_query(F.data == "set_footer")
 async def set_footer_start(c: CallbackQuery, state: FSMContext):
-    await c.message.answer("🖋 Post tagiga chiqadigan footer matnini yuboring:")
+    await c.message.edit_text("🖋 Post tagiga chiqadigan footer matnini yuboring:", reply_markup=get_back_to_settings_kb())
     await state.set_state(AdminStates.waiting_for_footer)
     await c.answer()
 
 @dp.message(AdminStates.waiting_for_footer)
 async def save_footer(m: Message, state: FSMContext):
     await db.set_setting('footer_text', m.text)
-    await m.answer("✅ Footer matni saqlandi.")
+    await m.answer("✅ Footer matni saqlandi.", reply_markup=get_main_kb())
     await state.clear()
 
 @dp.callback_query(F.data == "choose_q")
 async def choose_quarter(c: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="1-chorak", callback_data="q_1"), InlineKeyboardButton(text="2-chorak", callback_data="q_2")],
-        [InlineKeyboardButton(text="3-chorak", callback_data="q_3"), InlineKeyboardButton(text="4-chorak", callback_data="q_4")]
+        [InlineKeyboardButton(text="3-chorak", callback_data="q_3"), InlineKeyboardButton(text="4-chorak", callback_data="q_4")],
+        [InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_to_settings")]
     ])
     await c.message.edit_text("📅 Chorakni tanlang:", reply_markup=kb)
 
@@ -120,26 +141,21 @@ async def choose_quarter(c: CallbackQuery):
 async def save_quarter(c: CallbackQuery):
     q = c.data.split("_")[1]
     await db.set_setting('quarter', q)
-    await c.message.edit_text(f"✅ Tizim <b>{q}-chorak</b>ga sozlandi.")
+    await c.message.edit_text(f"✅ Tizim <b>{q}-chorak</b>ga sozlandi.", reply_markup=get_settings_kb())
     await c.answer()
 
 @dp.callback_query(F.data == "clear_cat")
 async def clear_catalog_confirm(c: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ HA, hammasini o'chirish", callback_data="confirm_clear")],
-        [InlineKeyboardButton(text="🔙 Bekor qilish", callback_data="cancel_clear")]
+        [InlineKeyboardButton(text="❌ HA, o'chirish", callback_data="confirm_clear")],
+        [InlineKeyboardButton(text="🔙 Bekor qilish", callback_data="back_to_settings")]
     ])
-    await c.message.edit_text("⚠️ <b>DIQQAT!</b> Katalogdagi barcha fayllar ro'yxatini o'chirib tashlamoqchimisiz?", reply_markup=kb)
+    await c.message.edit_text("⚠️ <b>DIQQAT!</b> Katalogni tozalamoqchimisiz?", reply_markup=kb)
 
 @dp.callback_query(F.data == "confirm_clear")
 async def clear_catalog_done(c: CallbackQuery):
     await db.clear_catalog()
-    await c.message.edit_text("🗑 Katalog muvaffaqiyatli tozalandi!")
-    await c.answer()
-
-@dp.callback_query(F.data == "cancel_clear")
-async def cancel_clear(c: CallbackQuery):
-    await c.message.edit_text("⚙️ <b>Sozlamalar bo'limi:</b>", reply_markup=get_settings_kb())
+    await c.message.edit_text("🗑 Katalog tozalandi!", reply_markup=get_settings_kb())
     await c.answer()
 
 @dp.message(F.text == "💎 Adminlarni boshqarish")
@@ -153,14 +169,13 @@ async def manage_admins(m: Message):
 
 @dp.message(F.text.startswith("/add_admin"))
 async def process_add_admin(m: Message):
-    if m.from_user.id != OWNER_ID:
-        return
+    if m.from_user.id != OWNER_ID: return
     try:
         new_id = int(m.text.split()[1])
         await db.add_admin(new_id)
-        await m.answer(f"✅ Foydalanuvchi <code>{new_id}</code> adminlar ro'yxatiga qo'shildi.")
-    except (IndexError, ValueError):
-        await m.answer("❌ Xato! Foydalanish: <code>/add_admin ID</code>")
+        await m.answer(f"✅ Foydalanuvchi <code>{new_id}</code> qo'shildi.")
+    except:
+        await m.answer("❌ Xato! Foydalanish: /add_admin ID")
 
 @dp.message(F.text == "📅 Rejalarni ko'rish")
 async def view_plans(m: Message):
