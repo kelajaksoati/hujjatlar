@@ -1,5 +1,4 @@
 import aiosqlite
-import os
 
 class Database:
     def __init__(self, db_path="bot_database.db"):
@@ -44,15 +43,30 @@ class Database:
                 res = await cursor.fetchone()
                 return res is not None
 
+    async def get_admins(self):
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT user_id FROM admins") as cursor:
+                return await cursor.fetchall()
+
     async def add_admin(self, user_id):
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (user_id,))
+            await db.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (user_id, ))
             await db.commit()
 
     async def add_to_catalog(self, name, category, link, msg_id):
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("INSERT INTO catalog (name, category, link, msg_id) VALUES (?, ?, ?, ?)", 
                              (name, category, link, msg_id))
+            await db.commit()
+
+    async def get_catalog(self, category):
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT name, link FROM catalog WHERE category = ?", (category,)) as cursor:
+                return await cursor.fetchall()
+
+    async def clear_catalog(self):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM catalog")
             await db.commit()
             
     async def get_stats(self):
