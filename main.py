@@ -151,6 +151,17 @@ async def manage_admins(m: Message):
     text += "\nQo'shish: <code>/add_admin ID</code>"
     await m.answer(text)
 
+@dp.message(F.text.startswith("/add_admin"))
+async def process_add_admin(m: Message):
+    if m.from_user.id != OWNER_ID:
+        return
+    try:
+        new_id = int(m.text.split()[1])
+        await db.add_admin(new_id)
+        await m.answer(f"✅ Foydalanuvchi <code>{new_id}</code> adminlar ro'yxatiga qo'shildi.")
+    except (IndexError, ValueError):
+        await m.answer("❌ Xato! Foydalanish: <code>/add_admin ID</code>")
+
 @dp.message(F.text == "📅 Rejalarni ko'rish")
 async def view_plans(m: Message):
     if not await db.is_admin(m.from_user.id, OWNER_ID): return
