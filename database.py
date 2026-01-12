@@ -53,6 +53,12 @@ class Database:
             await db.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (user_id, ))
             await db.commit()
 
+    # YANGI QO'SHILGAN FUNKSIYA
+    async def remove_admin(self, user_id):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
+            await db.commit()
+
     async def add_to_catalog(self, name, category, link, msg_id):
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("INSERT INTO catalog (name, category, link, msg_id) VALUES (?, ?, ?, ?)", 
