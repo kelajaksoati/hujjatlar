@@ -10,7 +10,8 @@ from aiohttp import web
 from dotenv import load_dotenv
 
 from database import Database
-from processor import smart_rename, edit_excel, add_pdf_watermark, edit_docx
+# processor'dan get_category_by_name funksiyasini ham import qilamiz
+from processor import smart_rename, edit_excel, add_pdf_watermark, edit_docx, get_category_by_name
 
 # --- SOZLAMALAR ---
 load_dotenv()
@@ -62,16 +63,18 @@ def get_inline_back():
 # --- ASOSIY FUNKSIYA ---
 async def process_and_send(file_path, original_name):
     try:
+        # Fayl nomini o'zgartirish
         new_name = smart_rename(original_name)
         new_path = os.path.join(os.path.dirname(file_path), new_name)
         os.rename(file_path, new_path)
         
+        # Fayl turiga qarab tahrirlash
         if new_name.lower().endswith(('.xlsx', '.xls')): edit_excel(new_path)
         elif new_name.lower().endswith('.pdf'): add_pdf_watermark(new_path)
         elif new_name.lower().endswith('.docx'): edit_docx(new_path)
 
-        cat = "BSB_CHSB" if any(x in new_name.lower() for x in ["bsb", "chsb"]) else \
-              ("Yuqori" if any(x in new_name.lower() for x in ["5-","6-","7-","8-","9-","10-","11-"]) else "Boshlang'ich")
+        # Kategoriyani avtomatik aniqlash (processor.py dagi yangi funksiya orqali)
+        cat = get_category_by_name(new_name)
 
         caption_tpl = await db.get_setting('post_caption') or "{name} | @{channel}"
         footer = await db.get_setting('footer_text') or ""
@@ -229,9 +232,10 @@ async def schedule_step(m: Message, state: FSMContext):
 async def show_cats(m: Message):
     if not await db.is_admin(m.from_user.id, OWNER_ID): return
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Boshlang'ich", callback_data="cat_Boshlang'ich")],
-        [InlineKeyboardButton(text="Yuqori sinflar", callback_data="cat_Yuqori")],
-        [InlineKeyboardButton(text="BSB/CHSB", callback_data="cat_BSB_CHSB")],
+        [InlineKeyboardButton(text="Boshlang'ich (O'zb)", callback_data="cat_Boshlang'ich")],
+        [InlineKeyboardButton(text="Yuqori sinflar (O'zb)", callback_data="cat_Yuqori")],
+        [InlineKeyboardButton(text="Rus maktablari (Рус)", callback_data="cat_Rus_maktab")],
+        [InlineKeyboardButton(text="BSB/CHSB (СОР/СОЧ)", callback_data="cat_BSB_CHSB")],
         [InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_to_main")]
     ])
     await m.answer("📁 Kategoriyani tanlang:", reply_markup=kb)
@@ -241,10 +245,10 @@ async def create_catalog_handler(c: CallbackQuery):
     cat = c.data.split("_", 1)[1]
     items = await db.get_catalog(cat)
     if not items: 
-        await c.answer("Fayllar topilmadi", show_alert=True)
+        await c.answer("Ushbu kategoriya bo'yicha fayllar topilmadi", show_alert=True)
         return
     q = await db.get_setting('quarter') or "?"
-    text = f"📂 <b>{q}-CHORAK REJALARI ({cat})</b>\n\n"
+    text = f"📂 <b>{q}-CHORAK REJALARI ({cat.replace('_', ' ')})</b>\n\n"
     for i, (name, link) in enumerate(items, 1): text += f"{i}. <a href='{link}'>{name}</a>\n"
     await bot.send_message(CH_ID, text, disable_web_page_preview=True)
     await c.answer("Katalog yuborildi!")
